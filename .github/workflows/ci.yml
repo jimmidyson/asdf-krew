@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+    paths-ignore:
+      - '**.md'
+
+jobs:
+  plugin_test:
+    strategy:
+      matrix:
+        os: [macOS-latest, ubuntu-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Silencing git over hex tag names
+        run: "git config --global advice.objectNameWarning false"
+      - name: Check cpu type
+        run: uname -m
+      - name: Running asdf's plugin-test
+        uses: asdf-vm/actions/plugin-test@v1
+        with:
+          command: kubectl-krew version
+        env:
+          GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: true

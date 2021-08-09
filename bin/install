@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+# Shamelessly stolen from https://github.com/beardix/asdf-yq/blob/master/bin/list-all#L7
+# Thank you for your great and simple work
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+error_exit() {
+  echo "$1" >&2
+  exit "${2:-1}"
+}
+
+
+install() {
+  declare -r install_type="$1"
+  declare -r download_path="$2"
+  declare -r install_path="$3"
+
+  if [ "$install_type" == "version" ]; then
+    mkdir "$install_path/bin"
+    KREW_ROOT="$install_path" "$download_path/bin/krew" install krew
+  else
+    export GOBIN="$download_path/bin"
+    go install github.com/kubernetes-sigs/krew/cmd/krew@"${ASDF_INSTALL_VERSION}"
+    KREW_ROOT="$install_path" "$download_path/bin/krew" install krew
+  fi
+}
+
+install "$ASDF_INSTALL_TYPE" "$ASDF_DOWNLOAD_PATH" "$ASDF_INSTALL_PATH"

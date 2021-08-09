@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+echo "asdf-krew is an asdf-vm plugin to install, download or compile krew, the package manager for kubectl plugins."

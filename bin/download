@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+declare -r RELEASES_URL="https://api.github.com/repos/kubernetes-sigs/krew/releases"
+
+error_exit() {
+  echo "$1" >&2
+  exit "${2:-1}"
+}
+
+get_platform() {
+  echo "$(uname | tr '[:upper:]' '[:lower:]')"
+}
+get_cpu() {
+  local machine_hardware_name
+  machine_hardware_name="$(uname -m)"
+
+  case "$machine_hardware_name" in
+    'x86_64') local cpu_type="amd64";;
+    'aarch64') local cpu_type="arm64";;
+    *) local cpu_type="$machine_hardware_name";;
+  esac
+
+  echo "$cpu_type"
+}
+
+get_assets_url() {
+  declare install_version="$1"
+
+  if [ -n "${GITHUB_API_TOKEN:+defined}" ]; then
+    declare releases_json="$(curl -s "$RELEASES_URL" -H "Authorization: token $GITHUB_API_TOKEN")"
+  else
+    declare releases_json="$(curl -s "$RELEASES_URL")"
+  fi
+
+  declare -a asset_urls
+  asset_urls=($(echo "$releases_json" | sed -n -E 's/[[:blank:]]*"assets_url":[[:blank:]]*"([^"]*)".*/\1/p'))
+
+  declare -a tag_names
+  tag_names=($(echo "$releases_json"  | sed -n -E 's/[[:blank:]]*"tag_name":[[:blank:]]*"([^"]*)".*/\1/p'))
+
+  for i in "${!tag_names[@]}"; do
+    if [ "${tag_names[$i]}" == "v$install_version" ]; then
+      echo "${asset_urls[$i]}"
+      return
+    fi
+  done
+
+  error_exit  "Given version '$install_version' did not match any releases. Try list-all to see available options"
+}
+find_all_asset_names() {
+  declare install_version="$1"
+
+  declare assets_url="$(get_assets_url "$install_version")"
+  if [ -z "$assets_url" ]; then
+    error_exit "No URL found for release $install_version"
+  fi
+
+  if [ -n "${GITHUB_API_TOKEN:+defined}" ]; then
+    declare assets_json="$(curl -s "$assets_url" -H "Authorization: token $GITHUB_API_TOKEN")"
+  else
+    declare assets_json="$(curl -s "$assets_url")"
+  fi
+  declare -a output=($(echo "$assets_json" | sed -n -E 's/[[:blank:]]*"browser_download_url":[[:blank:]]{0,2}"([^"]{8,})"/\1/p'))
+  echo "${output[@]}"
+}
+filter_assets() {
+  declare -a inArr=($@)
+
+  declare platform="$(get_platform)";
+  declare arch="$(get_cpu)"
+  declare -a filteredArr=()
+
+  for i in "${inArr[@]}"; do
+    declare filteredUrl="$(echo "$i" | sed -n -E "/\.tar\.gz$/p")"
+    declare canPass="$(echo "$filteredUrl" | sed -n -E 's/.*[[:alpha:]].*/true/p')"
+    if [ "$canPass" == "true" ]; then
+      filteredArr+=("$filteredUrl")
+    fi
+  done
+  echo "${filteredArr[@]}"
+}
+find_file_url() {
+  declare -r install_version="$@"
+
+  declare -r arch="$(get_cpu)"
+  declare -r platform="$(get_platform)"
+  declare -a assets=($(find_all_asset_names "$install_version"))
+  declare -a usableAssets=( "$(filter_assets "${assets[@]}")" )
+
+  if [ "${#usableAssets[@]}" == 0 ]; then
+    error_exit "No releases in version $install_version matching $platform $arch-bits"
+  elif [ "${#usableAssets[@]}" -gt 1  ]; then
+    echo "Multiple releases found matching $platform $arch-bits, choosing first" >&2
+  fi
+
+  echo "${usableAssets[0]}"
+}
+download() {
+  declare -r download_type="$1"
+  declare -r download_version="$2"
+  declare -r download_path="$3"
+
+  if [ "$download_type" == "version" ]; then
+    declare -r download_url="$(find_file_url "$download_version")"
+    if [ -z "$download_url" ]; then
+      error_exit "Malformed URL"
+    fi
+    if [ -z "${TMPDIR:-}" ]; then
+      tmp_download_dir=$(mktemp -d -t krew_XXXXXXX)
+      trap 'rm -rf $tmp_download_dir' EXIT
+    else
+      local tmp_download_dir=$TMPDIR
+    fi
+    local tmp_download_path="$tmp_download_dir/$(basename "$download_url")"
+    curl -fLo "$tmp_download_path" "$download_url"
+    declare -r platform="$(get_platform)"
+    declare -r arch="$(get_cpu)"
+    mkdir -p "$download_path/bin"
+    pushd "$tmp_download_dir"
+    tar xzf "$tmp_download_path"
+    local binary_name="krew-${platform}_${arch}"
+    local symlink_name="krew"
+    if [ "$platform" == "windows" ]; then
+      binary_name="${binary_name}.exe"
+      symlink_name="${symlink_name}.exe"
+    fi
+    cp -- "${binary_name}" "$download_path/bin"
+    ln -s "$download_path/bin/${binary_name}" "$download_path/bin/${symlink_name}"
+  fi
+}
+
+download "$ASDF_INSTALL_TYPE" "$ASDF_INSTALL_VERSION" "$ASDF_DOWNLOAD_PATH"
