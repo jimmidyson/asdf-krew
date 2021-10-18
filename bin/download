@@ -81,6 +81,18 @@ filter_assets() {
       filteredArr+=("$filteredUrl")
     fi
   done
+
+  if [[ ${#filteredArr[@]} -gt 1 ]]; then
+    for i in "${filteredArr[@]}"; do
+      declare filteredUrl="$(echo "$i" | sed -n -E "/${platform}_${arch}\.tar\.gz$/p")"
+      declare canPass="$(echo "$filteredUrl" | sed -n -E 's/.*[[:alpha:]].*/true/p')"
+      if [ "$canPass" == "true" ]; then
+        filteredArr=("$filteredUrl")
+        break
+      fi
+    done
+  fi
+
   echo "${filteredArr[@]}"
 }
 find_file_url() {
